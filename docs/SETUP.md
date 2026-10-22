@@ -113,6 +113,18 @@ a **Chest** marker, `tome` a scripture, `medicae_servitor` a medicae station, an
 and a new category appears in the Layers tab and in Strikemap. Give it a colour and letter in `POI_STYLE` and a
 group in `STRIKE_GROUPS` in `viewer/app.js` to place it in the sidebar.
 
+### Ability circles, icons and drawing
+
+The ability list is `ABILITIES` in `viewer/app.js`: each entry has a label, class, icon name, colour and `rings`
+(`{ r: <metres>, label }`). Every note names the Lua source file the radius came from; to add an ability, read its
+radius from `scripts/settings/ability/` or `scripts/settings/talent/` in the Lua source and add an entry. Icon
+textures are listed in `pipeline/build_icons.py` (`ICONS`: output name to game texture path, using each ability's
+`hud_icon`); run it again after adding one. Icons are written to `packs/_icons/` and are derived from the game, so
+they stay out of git like the rest of `packs/`.
+
+Drawings and circles are stored in `localStorage` as `mv_draw_<mission>` and `mv_abil_<mission>`, in Darktide world
+coordinates.
+
 Found ticks are stored in your browser (`localStorage`, key `mv_found_<mission>`), so they stay on your PC and
 survive rebuilds of the same mission.
 

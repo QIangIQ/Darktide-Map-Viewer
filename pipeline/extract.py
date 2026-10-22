@@ -32,6 +32,11 @@ def main():
             os.remove(p)
     import kinds, names
     kinds.kinds(); names.build()
+    try:
+        import build_icons
+        build_icons.main()
+    except Exception as e:  # icons are optional (Strikemap falls back to letters)
+        log('icons', 'skipped: %r' % (e,))
     log('done', 'cache ready')
 
 

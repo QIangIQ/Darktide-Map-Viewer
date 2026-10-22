@@ -60,6 +60,26 @@ Open a mission and press **T** (or click **Strikemap**).
 - Move the **map slice** (Q / E or the slider) to look at one floor at a time. `I` gives an isometric Strikemap.
 - **P** or *Save PNG* exports the current view. `T` again returns to the normal viewer.
 
+### Ability radius circles and path drawing
+
+Both live in the **Strike** tab and are saved in your browser per mission.
+
+- **Ability radius circles**: pick an ability, click the map to place its circle, with the ability icon and class
+  badge at the centre. Radii are the game's own numbers, read from the Lua source:
+
+  | Ability | Radius |
+  |---|---|
+  | Veteran shout (Voice of Command) | 9 m |
+  | Psyker shout | 30 m |
+  | Ogryn taunt | 12 m |
+  | Adamant shout | 6 m near, 12 m far |
+  | Zealot relic pulse (Bolstering Prayer) | 10 m growing 0.1 m per second of the 5.5 s channel; five rings for t = 1 to 5 s (10.1 to 10.5 m) |
+
+  The icons are decoded from your own game files by `python pipeline/build_icons.py` (it also runs at the end of
+  `extract.py`). Without them the circles use a coloured letter instead.
+- **Draw on the map**: drag to draw a path anywhere, choose a colour and width, `Ctrl+Z` removes the last stroke.
+  Circles and drawings are part of the PNG export.
+
 Chest and pickup positions come from the game's own placed units (their flow data marks them as chest or pickup
 spawn points). They show where a spawn can appear, not what the director spawns in a given run.
 

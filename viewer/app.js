@@ -3,6 +3,9 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { ShapeUtils } from 'three';
+import { Line2 } from 'three/addons/lines/Line2.js';
+import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
+import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
 
 const $ = (s) => document.querySelector(s);
 const el = (tag, attrs = {}, ...kids) => {
@@ -676,7 +679,7 @@ function homeCamera() {
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 canvas.addEventListener('mousedown', (e) => {
   if (e.button === 2 && !e.altKey) { S.look = true; try { canvas.requestPointerLock?.()?.catch?.(() => {}); } catch (_) {} }
-  if (e.button === 0 && S.mapMode) { S.drag = { x: e.clientX, y: e.clientY, moved: false }; }
+  if (e.button === 0 && S.mapMode && !(S.strike && S.drawOn)) { S.drag = { x: e.clientX, y: e.clientY, moved: false }; }
 });
 addEventListener('mouseup', (e) => {
   if (e.button === 2) { S.look = false; document.exitPointerLock?.(); }
@@ -761,6 +764,8 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyP') screenshot();
   if (e.code === 'KeyF') focusSel();
   if (e.code === 'KeyH') $('#help').hidden = !$('#help').hidden;
+  if (S.strike && e.code === 'KeyZ' && (e.ctrlKey || e.metaKey)) strikeUndo();
+  if (e.code === 'Escape' && (S.abilTool || S.drawOn)) { S.abilTool = null; S.drawOn = false; canvas.style.cursor = ''; buildStrikeUI(); return; }
   if (e.code === 'Escape') { if (S.selected) select(null); else if (!$('#help').hidden) $('#help').hidden = true; else if (S.mapMode) setMap(false); }
 });
 addEventListener('keyup', (e) => S.keys.delete(e.code));
@@ -1211,11 +1216,13 @@ function setStrike(on) {
     S.strikeCats = {};
     for (const cat of Object.keys(poiByCat)) S.strikeCats[cat] = STRIKE_DEFAULT_ON.has(cat);
     strikeApplyCats();
+    loadStk(); stkRebuildAbil(); stkRebuildStrokes();
     const main = S.overlayObjs['Main path']; if (main) { main.on = true; main.obj.visible = true; }
     S.showLabels = true;
     document.querySelector('.tabs button[data-tab="strike"]').click();
   } else {
     S.strike = false;
+    stkClear(); S.abilTool = null; S.drawOn = false; canvas.style.cursor = '';
     strikeRestoreMaterials();
     scene.background.set(S.strikeBg ?? 0x1a1e1f);
     for (const [o, was] of S.strikeSaved || []) { o.on = was; o.obj.visible = was; }
@@ -1246,6 +1253,7 @@ function strikeScaleSprites() {
   if (Math.abs(s - (S.strikeSpriteScale || 0)) < 1e-4) return;
   S.strikeSpriteScale = s;
   for (const sp of S.poiSprites || []) sp.scale.set(s, s, 1);
+  for (const sp of S.abilSprites || []) sp.scale.set(s * 2.2, s * 2.2, 1);
 }
 function toggleFound(p) {
   const k = poiKey(p);
@@ -1253,6 +1261,11 @@ function toggleFound(p) {
   saveFound(); strikeApplyCats(); buildStrikeUI();
 }
 function strikeClick(e) {
+  if (S.abilTool) {
+    const p = stkWorldPoint(e);
+    if (p) { S.abil.push({ k: S.abilTool, pos: p }); saveStk(); stkRebuildAbil(); buildStrikeUI(); }
+    return;
+  }
   const r = canvas.getBoundingClientRect();
   const ndc = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
   ray.setFromCamera(ndc, ortho);
@@ -1289,6 +1302,7 @@ function buildStrikeUI() {
       el('button', { onclick: () => { if (confirm('Clear every found tick on this mission?')) { S.found.clear(); saveFound(); strikeApplyCats(); buildStrikeUI(); } } }, 'Reset found'),
       el('button', { onclick: screenshot }, 'Save PNG (P)')),
     el('small', {}, 'Click a marker on the map to tick it off. Slide the map slice (Q / E) to change floor.'));
+  box.append(...stkToolsUI());
   const used = new Set();
   const section = (title, cats) => {
     const present = cats.filter((c) => byCat[c]); if (!present.length) return;
@@ -1317,6 +1331,190 @@ function buildStrikeUI() {
   section('Other', Object.keys(byCat).filter((c) => !STRIKE_GROUPS.some(([, cs]) => cs.includes(c))));
   box.scrollTop = keep;
 }
+// ---- Strikemap tools: ability radius circles and free drawing for pathing
+// Radii are the game's own numbers (source file in each note). Circles and drawings are stored per mission in this
+// browser (mv_abil_<pack>, mv_draw_<pack>) in Darktide world coordinates (x, y, z metres).
+const ICON_URL = (n) => `/packs/_icons/${n}.png`;
+const ABILITIES = {
+  veteran_shout: { label: 'Veteran shout (Voice of Command)', cls: 'veteran', icon: 'veteran_ability_voice_of_command', color: '#4fc3f7', glyph: 'V',
+    rings: [{ r: 9, label: '9 m' }],
+    note: 'radius 9 m. talent_settings_veteran.lua veteran_3.combat_ability.radius' },
+  psyker_shout: { label: 'Psyker shout (vent warp charge)', cls: 'psyker', icon: 'psyker_shout_vent_warp_charge', color: '#ba68c8', glyph: 'P',
+    rings: [{ r: 30, label: '30 m' }],
+    note: 'range 30 m. talent_settings_psyker.lua psyker_2.combat_ability.shout_range' },
+  ogryn_taunt: { label: 'Ogryn taunt', cls: 'ogryn', icon: 'ogryn_ability_taunt', color: '#ffb74d', glyph: 'O',
+    rings: [{ r: 12, label: '12 m' }],
+    note: 'radius 12 m. ability_templates/ogryn_taunt_shout.lua RADIUS' },
+  adamant_shout: { label: 'Adamant shout', cls: 'adamant', icon: 'adamant_ability_shout', color: '#81c784', glyph: 'A',
+    rings: [{ r: 6, label: 'near 6 m' }, { r: 12, label: 'far 12 m', dashed: true }],
+    note: 'range 6 m, far range 12 m (16 m improved). talent_settings_adamant.lua combat_ability.shout' },
+  zealot_relic: { label: 'Zealot relic pulse (Bolstering Prayer)', cls: 'zealot', icon: 'zealot_ability_bolstering_prayer', color: '#ff8a65', glyph: 'Z',
+    rings: [1, 2, 3, 4, 5].map((t) => ({ r: +(10 + 0.1 * t).toFixed(1), label: t === 5 ? 'pulse 5 s: 10.5 m' : 't=' + t + ' s: ' + (10 + 0.1 * t).toFixed(1) + ' m' })),
+    note: 'channel lasts 5.5 s, pulses every 0.8 s. Radius is 10 m + 0.1 m per second of channel (time capped at 5 s): rings show t = 1 to 5 s. zealot_relic.lua action_zealot_channel, action_zealot_channel.lua, talent_settings_zealot.lua bolstering_prayer.tick_rate' },
+};
+const DRAW_COLORS = ['#ff5252', '#ffd740', '#69f0ae', '#40c4ff', '#e040fb', '#ffffff'];
+S.abil = []; S.strokes = []; S.abilTool = null; S.drawOn = false; S.drawColor = DRAW_COLORS[0]; S.drawWidth = 4;
+S.showCircles = true; S.showDraw = true; S.abilSprites = [];
+const stkMats = [];
+const abilKey = () => 'mv_abil_' + S.pack, drawKey = () => 'mv_draw_' + S.pack;
+function loadStk() {
+  for (const [k, key] of [['abil', abilKey()], ['strokes', drawKey()]]) {
+    try { S[k] = JSON.parse(localStorage.getItem(key) || '[]'); } catch (_) { S[k] = []; }
+  }
+}
+function saveStk() {
+  try { localStorage.setItem(abilKey(), JSON.stringify(S.abil)); localStorage.setItem(drawKey(), JSON.stringify(S.strokes)); } catch (_) {}
+}
+function stkWorldPoint(e) {
+  const r = canvas.getBoundingClientRect();
+  ray.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), ortho);
+  const h = (S.mapCeil ?? 0) - 3, p = new THREE.Vector3();
+  if (!ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -h), p)) return null;
+  return threeToStingray(p).map((v) => +v.toFixed(2));
+}
+function stkEnsure() {
+  if (S.stkGroup && S.stkGroup.parent === overlayGroup) return;
+  S.stkGroup = new THREE.Group(); S.stkGroup.name = 'Strike tools';
+  S.abilGroup = new THREE.Group(); S.strokeGroup = new THREE.Group();
+  S.stkGroup.add(S.abilGroup, S.strokeGroup); overlayGroup.add(S.stkGroup);
+}
+function stkClear() {
+  if (S.stkGroup) { overlayGroup.remove(S.stkGroup); S.stkGroup.traverse((o) => o.geometry?.dispose?.()); S.stkGroup = null; }
+  S.labels = S.labels.filter((l) => { if (l.stk) { l.el.remove(); return false; } return true; });
+  stkMats.length = 0; S.abilSprites = [];
+}
+function fatLine(pts, color, width, dashed) {
+  const m = new LineMaterial({ color: new THREE.Color(color), linewidth: width, transparent: true, depthTest: false, dashed: !!dashed, dashSize: 2, gapSize: 1.5 });
+  m.resolution.set(innerWidth, innerHeight); stkMats.push(m);
+  const g = new LineGeometry(); g.setPositions(pts.flat());
+  const l = new Line2(g, m); l.frustumCulled = false; l.renderOrder = 40; if (dashed) l.computeLineDistances();
+  return l;
+}
+const iconCache = new Map();
+const loadImg = (url) => new Promise((res) => { const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = url; });
+async function abilityTexture(a) {
+  if (iconCache.has(a.icon)) return iconCache.get(a.icon);
+  const [ab, cl] = await Promise.all([loadImg(ICON_URL(a.icon)), loadImg(ICON_URL('class_' + a.cls))]);
+  const cv = document.createElement('canvas'); cv.width = cv.height = 128;
+  const c = cv.getContext('2d');
+  c.fillStyle = '#101214'; c.beginPath(); c.arc(64, 64, 60, 0, 7); c.fill();
+  if (ab) { // ability icon, cover-fitted into the disc
+    c.save(); c.beginPath(); c.arc(64, 64, 56, 0, 7); c.clip();
+    const k = Math.max(112 / ab.width, 112 / ab.height); c.drawImage(ab, 64 - ab.width * k / 2, 64 - ab.height * k / 2, ab.width * k, ab.height * k); c.restore();
+  } else { c.fillStyle = a.color; c.font = 'bold 64px Segoe UI, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(a.glyph, 64, 68); }
+  c.lineWidth = 8; c.strokeStyle = a.color; c.beginPath(); c.arc(64, 64, 60, 0, 7); c.stroke();
+  if (cl) { // class badge, bottom right
+    c.fillStyle = '#101214'; c.beginPath(); c.arc(100, 100, 24, 0, 7); c.fill();
+    c.lineWidth = 4; c.stroke();
+    c.drawImage(cl, 82, 82, 36, 36);
+  }
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace;
+  iconCache.set(a.icon, t); return t;
+}
+function stkRebuildAbil() {
+  if (!S.strike) return;
+  stkEnsure();
+  const g = S.abilGroup;
+  for (const c of [...g.children]) { g.remove(c); c.geometry?.dispose?.(); }
+  S.labels = S.labels.filter((l) => { if (l.stk === 'abil') { l.el.remove(); return false; } return true; });
+  S.abilSprites = [];
+  g.visible = S.showCircles;
+  const N = 96;
+  S.abil.forEach((it) => {
+    const a = ABILITIES[it.k]; if (!a) return;
+    const [x, y, z] = it.pos;
+    a.rings.forEach((rg, j) => {
+      const pts = []; for (let i = 0; i <= N; i++) { const t = i / N * Math.PI * 2; pts.push([x + rg.r * Math.cos(t), y + rg.r * Math.sin(t), z]); }
+      g.add(fatLine(pts, a.color, 3, rg.dashed));
+      if (j === a.rings.length - 1 || a.rings.length < 3) {
+        const fill = new THREE.Mesh(new THREE.CircleGeometry(rg.r, 64), new THREE.MeshBasicMaterial({ color: a.color, transparent: true, opacity: 0.08, depthTest: false, depthWrite: false }));
+        fill.position.set(x, y, z - 0.05); fill.renderOrder = 38; g.add(fill);
+      }
+      const ang = 0.5 + j * 0.45;
+      S.labels.push({ pos: new THREE.Vector3(x + rg.r * Math.cos(ang), y + rg.r * Math.sin(ang), z), text: rg.label, group: g, stk: 'abil',
+        el: el('div', { class: 'label3d' }, rg.label) });
+    });
+    const mat = new THREE.SpriteMaterial({ depthTest: false, sizeAttenuation: false, transparent: true });
+    abilityTexture(a).then((t) => { mat.map = t; mat.needsUpdate = true; invalidate(); });
+    const sp = new THREE.Sprite(mat); sp.position.set(x, y, z + 0.5); sp.renderOrder = 45; g.add(sp); S.abilSprites.push(sp);
+  });
+  S.strikeSpriteScale = 0; invalidate();
+}
+function stkRebuildStrokes() {
+  if (!S.strike) return;
+  stkEnsure();
+  const g = S.strokeGroup;
+  for (const c of [...g.children]) { g.remove(c); c.geometry?.dispose?.(); }
+  g.visible = S.showDraw;
+  for (const st of S.strokes) if (st.pts.length > 1) g.add(fatLine(st.pts.map((p) => [p[0], p[1], p[2] + 0.2]), st.c, st.w));
+  invalidate();
+}
+function strikeUndo() {
+  if (S.strokes.length) { S.strokes.pop(); saveStk(); stkRebuildStrokes(); }
+  else if (S.abil.length) { S.abil.pop(); saveStk(); stkRebuildAbil(); buildStrikeUI(); }
+}
+let stkCur = null;
+canvas.addEventListener('pointerdown', (e) => {
+  if (!S.strike || !S.drawOn || e.button !== 0 || e.altKey) return;
+  const p = stkWorldPoint(e); if (!p) return;
+  stkCur = { c: S.drawColor, w: S.drawWidth, pts: [p] }; S.strokes.push(stkCur);
+  try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+});
+canvas.addEventListener('pointermove', (e) => {
+  if (!stkCur) return;
+  const p = stkWorldPoint(e); if (!p) return;
+  const l = stkCur.pts[stkCur.pts.length - 1];
+  if (Math.hypot(p[0] - l[0], p[1] - l[1]) < 0.6 / Math.max(0.2, ortho.zoom)) return;
+  stkCur.pts.push(p); stkRebuildStrokes();
+});
+addEventListener('pointerup', () => {
+  if (!stkCur) return;
+  if (stkCur.pts.length < 2) S.strokes.pop();
+  stkCur = null; saveStk(); stkRebuildStrokes(); buildStrikeUI();
+});
+function stkToolsUI() {
+  const out = [];
+  const chk = (label, on, fn) => { const i = el('input', { type: 'checkbox' }); i.checked = on; i.onchange = () => fn(i.checked); return el('label', {}, i, label); };
+  out.push(el('h4', {}, 'Ability radius circles'));
+  out.push(el('small', {}, 'Pick an ability, then click the map to place its circle. Esc stops placing.'));
+  for (const [k, a] of Object.entries(ABILITIES)) {
+    const img = el('img', { src: ICON_URL(a.icon), width: 28, height: 28, style: 'border-radius:50%;border:2px solid ' + a.color + ';object-fit:cover;background:#101214' });
+    img.onerror = () => { img.style.visibility = 'hidden'; };
+    const cl = el('img', { src: ICON_URL('class_' + a.cls), width: 18, height: 18, style: 'background:#101214;border-radius:50%;margin-left:-10px;margin-top:14px' });
+    cl.onerror = () => { cl.style.display = 'none'; };
+    const b = el('button', { class: S.abilTool === k ? 'primary' : '', title: a.note, style: 'display:flex;align-items:center;gap:6px;width:100%;text-align:left;margin:2px 0',
+      onclick: () => { S.abilTool = S.abilTool === k ? null : k; S.drawOn = false; canvas.style.cursor = S.abilTool ? 'crosshair' : ''; buildStrikeUI(); } },
+      img, cl, el('span', {}, a.label, el('br'), el('small', {}, a.rings.length > 1 ? a.rings.map((r) => r.label).join(' / ') : a.rings[0].label)));
+    out.push(b);
+  }
+  if (S.abilTool) out.push(el('small', {}, ABILITIES[S.abilTool].note));
+  if (S.abil.length) {
+    out.push(chk('Show circles', S.showCircles, (v) => { S.showCircles = v; stkRebuildAbil(); }));
+    S.abil.forEach((it, i) => {
+      const a = ABILITIES[it.k]; if (!a) return;
+      out.push(el('div', { class: 'stk-row' }, el('span', { class: 'sw', style: 'background:' + a.color }), el('span', {}, a.label.split(' (')[0]),
+        el('small', {}, it.pos.slice(0, 2).map((v) => v.toFixed(0)).join(', ')),
+        el('button', { onclick: () => strikeGo({ pos: it.pos }) }, 'Go'),
+        el('button', { onclick: () => { S.abil.splice(i, 1); saveStk(); stkRebuildAbil(); buildStrikeUI(); } }, 'x')));
+    });
+  }
+  out.push(el('h4', {}, 'Draw a path'));
+  out.push(el('button', { class: S.drawOn ? 'primary' : '', onclick: () => { S.drawOn = !S.drawOn; S.abilTool = null; canvas.style.cursor = S.drawOn ? 'crosshair' : ''; buildStrikeUI(); } },
+    S.drawOn ? 'Drawing: drag on the map (Esc to stop)' : 'Draw on the map'));
+  const sw = el('div', { class: 'rowbtn' });
+  for (const c of DRAW_COLORS) sw.append(el('button', { style: `background:${c};width:22px;height:22px;padding:0;${S.drawColor === c ? 'outline:2px solid #fff' : ''}`, title: c,
+    onclick: () => { S.drawColor = c; buildStrikeUI(); } }));
+  out.push(sw);
+  const wr = el('input', { type: 'range', min: 2, max: 12, step: 1, value: S.drawWidth });
+  wr.onchange = () => { S.drawWidth = +wr.value; };
+  out.push(el('label', {}, 'Width', wr));
+  out.push(el('div', { class: 'rowbtn' },
+    el('button', { onclick: () => { S.strokes.pop(); saveStk(); stkRebuildStrokes(); } }, 'Undo stroke (Ctrl+Z)'),
+    el('button', { onclick: () => { if (S.strokes.length && confirm('Clear all drawings on this mission?')) { S.strokes = []; saveStk(); stkRebuildStrokes(); } } }, 'Clear drawings')));
+  out.push(chk('Show drawings', S.showDraw, (v) => { S.showDraw = v; stkRebuildStrokes(); }));
+  out.push(el('small', {}, `${S.strokes.length} stroke(s). Drawings and circles are saved in this browser per mission and appear in the PNG export.`));
+  return out;
+}
 $('#btn-strike').onclick = () => setStrike(!S.strike);
 
 // ---------------------------------------------------------------- loop
@@ -1330,7 +1528,7 @@ function camKey() {
 for (const ev of ['pointerdown', 'pointerup', 'wheel', 'keydown', 'keyup', 'input', 'change', 'click']) addEventListener(ev, invalidate, true);
 addEventListener('pointermove', () => { if (S.look || S.drag) invalidate(); }, true);
 function render() {
-  if (S.strike) strikeScaleSprites();
+  if (S.strike) { strikeScaleSprites(); for (const m of stkMats) m.resolution.set(innerWidth, innerHeight); }
   renderer.render(scene, S.mapMode ? ortho : camera);
 }
 function tick() {
