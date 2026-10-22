@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Darktide Map Viewer</title>
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<canvas id="gl"></canvas>
+
+<!-- mission menu -->
+<section id="menu">
+  <header>
+    <h1>Darktide Map Viewer <span>Warhammer 40,000: Darktide</span></h1>
+    <div class="menu-tools">
+      <label>Texture size
+        <select id="texmax"><option>512</option><option selected>1024</option><option>2048</option></select>
+      </label>
+      <button id="btn-buildall" title="Build every mission that has no pack yet">Build all missing</button>
+      <button id="btn-extract" title="Re-read the game bundles (after a game update). Game must be closed.">Refresh game cache</button>
+    </div>
+  </header>
+  <div id="job" hidden><div class="bar"><i></i></div><span id="job-text"></span></div>
+  <div id="missions"></div>
+  <footer>Maps are built on this PC from your own Darktide install. Packs and textures are derived game data: personal use only, do not share.</footer>
+</section>
+
+<!-- in-map UI -->
+<section id="hud" hidden>
+  <div id="topbar">
+    <button id="btn-back" title="Back to mission list (Esc)">&#8592; Missions</button>
+    <strong id="map-title"></strong>
+    <span id="stats"></span>
+    <span class="spacer"></span>
+    <button id="btn-map" title="Top-down map (M)">Map view</button>
+    <button id="btn-iso" title="Isometric map (I); R rotates it 90 degrees">Isometric</button>
+    <button id="btn-strike" title="Strikemap: flat 2D map with chest and collectible checklist (T)">Strikemap</button>
+    <button id="btn-shot"title="Screenshot (P)">Screenshot</button>
+    <button id="btn-help" title="Controls (H)">?</button>
+  </div>
+
+  <aside id="panel">
+    <div class="tabs">
+      <button data-tab="layers" class="on">Layers</button>
+      <button data-tab="search">Search</button>
+      <button data-tab="gfx">Graphics</button>
+      <button data-tab="pins">Pins</button>
+      <button data-tab="strike">Strike</button>
+    </div>
+    <div class="tab" id="tab-layers"></div>
+    <div class="tab" id="tab-search" hidden>
+      <input id="q" placeholder="unit name or hash" autocomplete="off">
+      <div id="results"></div>
+    </div>
+    <div class="tab" id="tab-gfx" hidden></div>
+    <div class="tab" id="tab-pins" hidden></div>
+    <div class="tab" id="tab-strike" hidden></div>
+  </aside>
+
+  <div id="mapbar" hidden>Map slice: show everything below
+    <input id="ceil" type="range" min="-200" max="400" step="1" value="0"><span>0 m</span>
+    <small>(Q / E or PgUp / PgDn) · drag to pan · wheel to zoom · click to jump there</small></div>
+  <div id="ruler" hidden></div>
+  <div id="info" hidden></div>
+  <div id="coords"></div>
+  <div id="help" hidden>
+    <h3>Controls</h3>
+    <table>
+      <tr><td>Right mouse drag</td><td>Look around</td></tr>
+      <tr><td>W A S D</td><td>Move</td></tr>
+      <tr><td>Q / E</td><td>Down / up</td></tr>
+      <tr><td>Shift / Ctrl</td><td>Fast / slow</td></tr>
+      <tr><td>Mouse wheel</td><td>Change speed (map view: zoom)</td></tr>
+      <tr><td>Double-click</td><td>Identify object</td></tr>
+      <tr><td>F</td><td>Focus selected object</td></tr>
+      <tr><td>Alt + click</td><td>Ruler point (Alt + right-click clears)</td></tr>
+      <tr><td>M</td><td>Top-down map view; click to jump there</td></tr>
+      <tr><td>T</td><td>Strikemap: flat 2D map with chest / collectible checklist</td></tr>
+      <tr><td>P</td><td>Screenshot</td></tr>
+      <tr><td>Esc</td><td>Clear selection / back</td></tr>
+    </table>
+    <p>Coordinates are Darktide world coordinates (Z up, metres).</p>
+  </div>
+  <div id="loading" hidden><div class="bar"><i></i></div><span></span></div>
+</section>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

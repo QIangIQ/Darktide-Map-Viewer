@@ -1,0 +1,12 @@
+# derived from the game: never commit
+cache/
+packs/
+Darktide-Source-Code/
+Darktide-Source-Code-master/
+tools/limn.exe
+tools/*.dll
+tools/hashes.bin
+
+__pycache__/
+*.pyc
+*.bak*
