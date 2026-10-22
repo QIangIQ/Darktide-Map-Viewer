@@ -16,7 +16,8 @@ grimoire and scripture spots, pickup spawn points, medicae stations and more).
 > personally and do not redistribute them. This is an unofficial fan tool and is not affiliated with Fatshark.
 > Warhammer 40,000 and Darktide are trademarks of their owners.
 
-License: MIT for the tool's code (see [LICENSE](LICENSE)); game content is not covered.
+License: MIT for the tool's code (see [LICENSE](LICENSE)). Warhammer 40,000: Darktide, its game files and anything
+built from them (`cache/`, `packs/`) belong to their owners and are not licensed here.
 
 ## Install
 
