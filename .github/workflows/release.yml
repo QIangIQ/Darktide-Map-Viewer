@@ -1,0 +1,21 @@
+name: release
+
+# Push a tag such as v1.0.0 to attach a source zip (no game data is in the repository) to a GitHub release.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  zip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Zip the tool
+        run: git archive --format=zip --prefix=Darktide-Map-Viewer/ -o Darktide-Map-Viewer-${{ github.ref_name }}.zip HEAD
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" "Darktide-Map-Viewer-${{ github.ref_name }}.zip" --title "${{ github.ref_name }}" --generate-notes

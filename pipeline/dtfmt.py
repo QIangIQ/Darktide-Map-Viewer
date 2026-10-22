@@ -1,19 +1,31 @@
 """Shared Darktide (Stingray) resource helpers: resource formats, hashing, Oodle, path settings.
 
-Settings (environment variables, all optional):
-  DARKTIDE_ROOT    the Darktide install folder (the one that contains `bundle` and `binaries`); found automatically
-                   in the usual Steam library folders when not set
-  DARKTIDE_SOURCE  a checkout of the community Darktide Lua source dump; default: <this repo>/Darktide-Source-Code
+Settings, all optional. Each is read from an environment variable first, then from `config.local.json` in the repo
+root (git-ignored; see config.example.json), then found automatically:
+  DARKTIDE_ROOT    (json: game_root)    the Darktide install folder (the one that contains `bundle` and `binaries`);
+                   found in the usual Steam library folders when not set
+  DARKTIDE_SOURCE  (json: source_root)  a checkout of the community Darktide Lua source dump;
+                   default: <this repo>/Darktide-Source-Code
 """
-import os, re, struct, pickle, ctypes
+import os, re, json, struct, pickle, ctypes
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE = os.path.join(ROOT, 'cache')
 RAW = os.path.join(CACHE, 'raw')
 
 
+def local_config():
+    try:
+        return json.load(open(os.path.join(ROOT, 'config.local.json'), encoding='utf-8-sig'))
+    except (OSError, ValueError):
+        return {}
+
+
+CFG = local_config()
+
+
 def find_game():
-    env = os.environ.get('DARKTIDE_ROOT')
+    env = os.environ.get('DARKTIDE_ROOT') or CFG.get('game_root')
     if env:
         return env
     name = 'Warhammer 40,000 DARKTIDE'
@@ -39,7 +51,7 @@ def find_game():
 
 GAME = find_game()
 BUNDLE = os.path.join(GAME, 'bundle')
-SOURCE = os.environ.get('DARKTIDE_SOURCE') or next(
+SOURCE = os.environ.get('DARKTIDE_SOURCE') or CFG.get('source_root') or next(
     (p for p in (os.path.join(ROOT, 'Darktide-Source-Code'), os.path.join(ROOT, 'Darktide-Source-Code-master'))
      if os.path.isdir(p)), os.path.join(ROOT, 'Darktide-Source-Code'))
 

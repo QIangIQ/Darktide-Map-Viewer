@@ -1,13 +1,21 @@
-"""Build several missions in one queue (keeps going when one fails). usage: build_all.py [--tex-max N] key ..."""
-import sys, json, time, argparse, traceback
+"""Build several missions in one queue (keeps going when one fails).
+
+usage: build_all.py [--tex-max N] [--missing] [key ...]
+  no keys     every mission in the game's templates
+  --missing   skip missions whose pack already has a manifest, so an interrupted run resumes where it stopped
+"""
+import os, sys, json, time, argparse, traceback
 import build_map
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('keys', nargs='*')
     ap.add_argument('--tex-max', type=int, default=1024)
+    ap.add_argument('--missing', action='store_true')
     a = ap.parse_args()
     keys = a.keys or list(build_map.OV.mission_templates())
+    if a.missing:
+        keys = [k for k in keys if not os.path.exists(os.path.join(build_map.PACKS, k, 'manifest.json'))]
     failed = []
     for i, k in enumerate(keys):
         print(json.dumps(dict(stage='queue', msg='%s (%d/%d)' % (k, i + 1, len(keys)), done=i, total=len(keys))), flush=True)

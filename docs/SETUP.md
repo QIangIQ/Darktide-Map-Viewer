@@ -50,13 +50,17 @@ packs/              created: one folder per built mission, plus packs/_tex share
 6. **Build a mission** from the mission list, or from a terminal (see section 4).
 7. **Open it**, then press `T` for the Strikemap view.
 
-Environment variables (all optional):
+Settings (all optional). Each is read from the environment variable first, then from `config.local.json` (copy
+`config.example.json`; it is git-ignored), then found automatically:
 
-| Variable | Default | Meaning |
-|---|---|---|
-| `DARKTIDE_ROOT` | found in your Steam libraries | game folder, the one that has `bundle` and `binaries` |
-| `DARKTIDE_SOURCE` | `./Darktide-Source-Code` | Lua source dump |
-| `MAPVIEWER_PORT` | `8740` | server port |
+| Variable | `config.local.json` key | Default | Meaning |
+|---|---|---|---|
+| `DARKTIDE_ROOT` | `game_root` | found in your Steam libraries | game folder, the one that has `bundle` and `binaries` |
+| `DARKTIDE_SOURCE` | `source_root` | `./Darktide-Source-Code` | Lua source dump |
+| `MAPVIEWER_PORT` | | `8740` | server port |
+
+Build every mission with `scripts\Build All Maps.cmd` (resumable: it skips missions that already have a pack).
+More pages: [pack-format.md](pack-format.md), [gameplay-data.md](gameplay-data.md).
 
 ## 3a. Quick checks when something does not start
 

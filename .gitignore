@@ -1,5 +1,6 @@
 # derived from the game: never commit
 cache/
+config.local.json
 packs/
 Darktide-Source-Code/
 Darktide-Source-Code-master/

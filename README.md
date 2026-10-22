@@ -41,10 +41,21 @@ textures (one mission was about 0.4 GB in testing, plus textures shared between 
    (about 10 minutes the first time).
 
 The page loads three.js from a CDN, so the first open needs an internet connection.
-If the game is not in a default Steam library, set `DARKTIDE_ROOT` to the game folder (the one containing `bundle`).
 
-The full guide, including building your own maps, using other textures sizes, adding marker categories,
-the pack format and troubleshooting, is in **[docs/SETUP.md](docs/SETUP.md)**.
+## Run
+
+Download the zip from Releases (or clone the repository), add `limn.exe` and the Lua source as above, and
+double-click **`run.bat`**. The page is the menu: pick a mission, build it, open it. No command line is needed.
+
+- **Build everything:** `scripts\Build All Maps.cmd` queues every mission, skips the ones that already have a
+  pack, and can be stopped and restarted.
+- **Other game or source folders:** copy `config.example.json` to `config.local.json` (git-ignored) and set
+  `game_root` and `source_root`, or set the `DARKTIDE_ROOT` and `DARKTIDE_SOURCE` environment variables.
+  Without either, the game is looked up in your Steam libraries.
+- **Docs:** [docs/](docs/README.md) has the full setup guide, the pack format, and where markers and radii come from.
+
+The full guide, including building your own maps, texture sizes, adding marker categories and troubleshooting,
+is in **[docs/SETUP.md](docs/SETUP.md)**.
 
 ## Strikemap mode
 
