@@ -72,6 +72,18 @@ Open a mission and press **T** (or click **Strikemap**).
 - Move the **map slice** (Q / E or the slider) to look at one floor at a time. `I` gives an isometric Strikemap.
 - **P** or *Save PNG* exports the current view. `T` again returns to the normal viewer.
 
+### Look, small objects and play zones
+
+- **Look:** *Flat* is the dark tactical style; *Textured* shows floors and walls with the game's own textures (the
+  pack must be built with textures, not `--no-textures`). Both keep the height slice and *Playable area only*.
+- **Hide small objects and debris:** presets (Off, Debris, Small, Structure) and a radius slider hide mesh parts
+  smaller than that radius in metres, so only floors, walls and large structures remain. It also works in the
+  normal 3D view.
+- **Play zones:** outline where people should play. Pick a type (Play here, Hold / fallback, Avoid, Staging /
+  route), press *New zone*, click the vertices, then *Finish* (Enter or double-click). Zones are filled, named and
+  listed; rename or delete them, and **Export JSON / Lua** writes the polygons in Darktide world coordinates
+  (`{ name, kind, pts }`), ready for a mod to read.
+
 ### Ability radius circles and path drawing
 
 Both live in the **Strike** tab and are saved in your browser per mission.

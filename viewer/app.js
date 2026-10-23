@@ -339,6 +339,7 @@ function applyVisibility() {
           const k = start + i;
           if (!S.levelOn[S.instLevel[e.ids[k]]]) continue;
           const o = k * 4, rad = e.sph[o + 3];
+          if (S.minObjR && rad < S.minObjR) continue; // "hide small objects / debris" (radius of the mesh part, metres)
           _sphere.center.set(e.sph[o], e.sph[o + 1], e.sph[o + 2]); _sphere.radius = rad;
           if (!shadows && !_frustum.intersectsSphere(_sphere)) continue;
           if (!map) {
@@ -710,7 +711,7 @@ canvas.addEventListener('wheel', (e) => {
   if (S.mapMode) { ortho.zoom = Math.max(0.05, Math.min(50, ortho.zoom * (e.deltaY > 0 ? 0.88 : 1.14))); ortho.updateProjectionMatrix(); }
   else S.speed = Math.max(0.5, Math.min(200, S.speed * (e.deltaY > 0 ? 0.85 : 1.18)));
 }, { passive: false });
-canvas.addEventListener('dblclick', (e) => { clearTimeout(S.clickT); pick(e); });
+canvas.addEventListener('dblclick', (e) => { clearTimeout(S.clickT); if (S.strike && S.zoneTool) { zoneFinish(); return; } pick(e); });
 
 // ---------------------------------------------------------------- ruler: Alt+click adds points, Alt+right-click clears
 const ruler = { pts: [], line: null, dots: new THREE.Group(), labels: [] };
@@ -765,7 +766,11 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyF') focusSel();
   if (e.code === 'KeyH') $('#help').hidden = !$('#help').hidden;
   if (S.strike && e.code === 'KeyZ' && (e.ctrlKey || e.metaKey)) strikeUndo();
-  if (e.code === 'Escape' && (S.abilTool || S.drawOn)) { S.abilTool = null; S.drawOn = false; canvas.style.cursor = ''; buildStrikeUI(); return; }
+  if (S.strike && S.zoneTool && e.code === 'Enter') { zoneFinish(); return; }
+  if (S.strike && S.zoneTool && e.code === 'Backspace') { S.zoneDraft.pop(); stkRebuildZones(); return; }
+  if (e.code === 'Escape' && (S.abilTool || S.drawOn || S.zoneTool)) {
+    S.abilTool = null; S.drawOn = false; S.zoneTool = null; S.zoneDraft = []; canvas.style.cursor = ''; stkRebuildZones(); buildStrikeUI(); return;
+  }
   if (e.code === 'Escape') { if (S.selected) select(null); else if (!$('#help').hidden) $('#help').hidden = true; else if (S.mapMode) setMap(false); }
 });
 addEventListener('keyup', (e) => S.keys.delete(e.code));
@@ -1121,23 +1126,55 @@ function loadFound() {
   try { for (const k of JSON.parse(localStorage.getItem(foundKey()) || '[]')) S.found.add(k); } catch (_) {}
 }
 function saveFound() { try { localStorage.setItem(foundKey(), JSON.stringify([...S.found])); } catch (_) {} }
+const STRIKE_VERT = `varying vec3 vW; varying vec3 vN; varying vec2 vUv;
+  void main() {
+    mat4 m = modelMatrix;
+    #ifdef USE_INSTANCING
+      m = m * instanceMatrix;
+    #endif
+    vec4 w = m * vec4(position, 1.0);
+    vW = w.xyz; vN = normalize(mat3(m) * normal); vUv = uv;
+    gl_Position = projectionMatrix * viewMatrix * w;
+  }`;
+// Textured look: the game's albedo textures, unlit, with the same height slice and corridor mask; floors full
+// brightness, walls a little darker.
+function strikeTexMat(m) {
+  S.strikeTexMats ||= new Map();
+  if (S.strikeTexMats.has(m)) return S.strikeTexMats.get(m);
+  strikeMaterial();
+  const t = new THREE.ShaderMaterial({
+    side: THREE.DoubleSide,
+    uniforms: { ...S.strikeU, uMap: { value: m.map || null }, uHasMap: { value: m.map ? 1 : 0 },
+      uCol: { value: m.color ? m.color.clone() : new THREE.Color(1, 1, 1) }, uAlpha: { value: m.alphaTest || 0 } },
+    vertexShader: STRIKE_VERT,
+    fragmentShader: `uniform float uCeil, uMaskOn, uHasMap, uAlpha; uniform vec4 uBox; uniform sampler2D uMask, uMap; uniform vec3 uCol;
+      varying vec3 vW; varying vec3 vN; varying vec2 vUv;
+      void main() {
+        if (vW.y > uCeil) discard;
+        if (uMaskOn > 0.5) {
+          vec2 uv = (vW.xz - uBox.xy) / uBox.zw;
+          if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) discard;
+          if (texture2D(uMask, vec2(uv.x, 1.0 - uv.y)).r < 0.5) discard;
+        }
+        vec4 tx = uHasMap > 0.5 ? texture2D(uMap, vUv) : vec4(1.0);
+        if (uAlpha > 0.0 && tx.a < uAlpha) discard;
+        vec3 c = tx.rgb * uCol * mix(0.72, 1.0, step(0.6, abs(vN.y)));
+        gl_FragColor = vec4(pow(c, vec3(1.0 / 2.2)), 1.0);
+      }`,
+  });
+  S.strikeTexMats.set(m, t);
+  return t;
+}
 function strikeMaterial() {
   if (S.strikeMat) return S.strikeMat;
   const [lo, hi] = strikeHeightRange();
+  // uniforms shared by the flat material and every textured one (same objects, so one update reaches all)
+  S.strikeU = { uCeil: { value: S.mapCeil ?? 1e4 }, uLo: { value: lo }, uHi: { value: hi },
+    uMask: { value: null }, uBox: { value: new THREE.Vector4(0, 0, 1, 1) }, uMaskOn: { value: 0 } };
   S.strikeMat = new THREE.ShaderMaterial({
     side: THREE.DoubleSide,
-    uniforms: { uCeil: { value: S.mapCeil ?? 1e4 }, uLo: { value: lo }, uHi: { value: hi },
-      uMask: { value: null }, uBox: { value: new THREE.Vector4(0, 0, 1, 1) }, uMaskOn: { value: 0 } },
-    vertexShader: `varying vec3 vW; varying vec3 vN;
-      void main() {
-        mat4 m = modelMatrix;
-        #ifdef USE_INSTANCING
-          m = m * instanceMatrix;
-        #endif
-        vec4 w = m * vec4(position, 1.0);
-        vW = w.xyz; vN = normalize(mat3(m) * normal);
-        gl_Position = projectionMatrix * viewMatrix * w;
-      }`,
+    uniforms: S.strikeU,
+    vertexShader: STRIKE_VERT,
     fragmentShader: `uniform float uCeil, uLo, uHi, uMaskOn; uniform vec4 uBox; uniform sampler2D uMask; varying vec3 vW; varying vec3 vN;
       void main() {
         if (vW.y > uCeil) discard;
@@ -1189,7 +1226,8 @@ function strikeApplyMaterials() {
   // surfaces only; light cards, decals, helpers and sky stay out of the flat map
   const flat = strikeMaterial();
   for (const e of S.meshes) {
-    const mats = e.mats.map((m) => (m.userData.rec?.family || 'surface') === 'surface' && m.visible ? flat : S.strikeHidden);
+    const mats = e.mats.map((m) => (m.userData.rec?.family || 'surface') === 'surface' && m.visible
+      ? (S.strikeTextured && m.isMeshStandardMaterial ? strikeTexMat(m) : flat) : S.strikeHidden);
     for (const im of e.objs) im.material = mats;
   }
 }
@@ -1216,13 +1254,13 @@ function setStrike(on) {
     S.strikeCats = {};
     for (const cat of Object.keys(poiByCat)) S.strikeCats[cat] = STRIKE_DEFAULT_ON.has(cat);
     strikeApplyCats();
-    loadStk(); stkRebuildAbil(); stkRebuildStrokes();
+    loadStk(); stkRebuildAbil(); stkRebuildStrokes(); stkRebuildZones();
     const main = S.overlayObjs['Main path']; if (main) { main.on = true; main.obj.visible = true; }
     S.showLabels = true;
     document.querySelector('.tabs button[data-tab="strike"]').click();
   } else {
     S.strike = false;
-    stkClear(); S.abilTool = null; S.drawOn = false; canvas.style.cursor = '';
+    stkClear(); S.abilTool = null; S.drawOn = false; S.zoneTool = null; S.zoneDraft = []; canvas.style.cursor = '';
     strikeRestoreMaterials();
     scene.background.set(S.strikeBg ?? 0x1a1e1f);
     for (const [o, was] of S.strikeSaved || []) { o.on = was; o.obj.visible = was; }
@@ -1261,6 +1299,11 @@ function toggleFound(p) {
   saveFound(); strikeApplyCats(); buildStrikeUI();
 }
 function strikeClick(e) {
+  if (S.zoneTool) {
+    const p = stkWorldPoint(e);
+    if (p) { S.zoneDraft.push(p); stkRebuildZones(); }
+    return;
+  }
   if (S.abilTool) {
     const p = stkWorldPoint(e);
     if (p) { S.abil.push({ k: S.abilTool, pos: p }); saveStk(); stkRebuildAbil(); buildStrikeUI(); }
@@ -1353,17 +1396,23 @@ const ABILITIES = {
     note: 'channel lasts 5.5 s, pulses every 0.8 s. Radius is 10 m + 0.1 m per second of channel (time capped at 5 s): rings show t = 1 to 5 s. zealot_relic.lua action_zealot_channel, action_zealot_channel.lua, talent_settings_zealot.lua bolstering_prayer.tick_rate' },
 };
 const DRAW_COLORS = ['#ff5252', '#ffd740', '#69f0ae', '#40c4ff', '#e040fb', '#ffffff'];
+try { S.minObjR = parseFloat(localStorage.getItem('mv_minobj')) || 0; S.strikeTextured = localStorage.getItem('mv_strike_tex') === '1'; } catch (_) { S.minObjR = 0; }
 S.abil = []; S.strokes = []; S.abilTool = null; S.drawOn = false; S.drawColor = DRAW_COLORS[0]; S.drawWidth = 4;
 S.showCircles = true; S.showDraw = true; S.abilSprites = [];
 const stkMats = [];
 const abilKey = () => 'mv_abil_' + S.pack, drawKey = () => 'mv_draw_' + S.pack;
+const zoneKey = () => 'mv_zone_' + S.pack;
 function loadStk() {
-  for (const [k, key] of [['abil', abilKey()], ['strokes', drawKey()]]) {
+  for (const [k, key] of [['abil', abilKey()], ['strokes', drawKey()], ['zones', zoneKey()]]) {
     try { S[k] = JSON.parse(localStorage.getItem(key) || '[]'); } catch (_) { S[k] = []; }
   }
+  S.zoneDraft = [];
 }
 function saveStk() {
-  try { localStorage.setItem(abilKey(), JSON.stringify(S.abil)); localStorage.setItem(drawKey(), JSON.stringify(S.strokes)); } catch (_) {}
+  try {
+    localStorage.setItem(abilKey(), JSON.stringify(S.abil)); localStorage.setItem(drawKey(), JSON.stringify(S.strokes));
+    localStorage.setItem(zoneKey(), JSON.stringify(S.zones));
+  } catch (_) {}
 }
 function stkWorldPoint(e) {
   const r = canvas.getBoundingClientRect();
@@ -1375,8 +1424,8 @@ function stkWorldPoint(e) {
 function stkEnsure() {
   if (S.stkGroup && S.stkGroup.parent === overlayGroup) return;
   S.stkGroup = new THREE.Group(); S.stkGroup.name = 'Strike tools';
-  S.abilGroup = new THREE.Group(); S.strokeGroup = new THREE.Group();
-  S.stkGroup.add(S.abilGroup, S.strokeGroup); overlayGroup.add(S.stkGroup);
+  S.abilGroup = new THREE.Group(); S.strokeGroup = new THREE.Group(); S.zoneGroup = new THREE.Group();
+  S.stkGroup.add(S.zoneGroup, S.abilGroup, S.strokeGroup); overlayGroup.add(S.stkGroup);
 }
 function stkClear() {
   if (S.stkGroup) { overlayGroup.remove(S.stkGroup); S.stkGroup.traverse((o) => o.geometry?.dispose?.()); S.stkGroup = null; }
@@ -1449,7 +1498,58 @@ function stkRebuildStrokes() {
   for (const st of S.strokes) if (st.pts.length > 1) g.add(fatLine(st.pts.map((p) => [p[0], p[1], p[2] + 0.2]), st.c, st.w));
   invalidate();
 }
+// ---- zones: polygons that show where people should play (same idea as the Pins tab's pox gas areas)
+const ZONE_KINDS = { play: ['Play here', '#69f0ae'], hold: ['Hold / fallback', '#ffd740'], avoid: ['Avoid', '#ff5252'], route: ['Staging / route', '#40c4ff'] };
+S.zones = []; S.zoneDraft = []; S.zoneTool = null; S.zoneKind = 'play'; S.showZones = true;
+const centroid = (pts) => [pts.reduce((a, p) => a + p[0], 0) / pts.length, pts.reduce((a, p) => a + p[1], 0) / pts.length, pts[0][2]];
+function stkRebuildZones() {
+  if (!S.strike) return;
+  stkEnsure();
+  const g = S.zoneGroup;
+  for (const c of [...g.children]) { g.remove(c); c.geometry?.dispose?.(); }
+  S.labels = S.labels.filter((l) => { if (l.stk === 'zone') { l.el.remove(); return false; } return true; });
+  g.visible = S.showZones;
+  S.zones.forEach((zn) => {
+    const col = (ZONE_KINDS[zn.kind] || ZONE_KINDS.play)[1], pts = zn.pts;
+    if (pts.length < 3) return;
+    const fill = new THREE.Mesh(new THREE.ShapeGeometry(new THREE.Shape(pts.map((p) => new THREE.Vector2(p[0], p[1])))),
+      new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.22, depthTest: false, depthWrite: false, side: THREE.DoubleSide }));
+    fill.position.z = pts[0][2] - 0.1; fill.renderOrder = 36; g.add(fill);
+    g.add(fatLine([...pts, pts[0]], col, 3));
+    S.labels.push({ pos: new THREE.Vector3(...centroid(pts)), text: zn.name, group: g, stk: 'zone', el: el('div', { class: 'label3d' }, zn.name) });
+  });
+  const d = S.zoneDraft;
+  if (d.length) {
+    const col = ZONE_KINDS[S.zoneKind][1];
+    if (d.length > 1) g.add(fatLine(d, col, 3, true));
+    d.forEach((p) => { const ring = []; for (let i = 0; i <= 24; i++) { const t = i / 24 * Math.PI * 2; ring.push([p[0] + 1.2 * Math.cos(t), p[1] + 1.2 * Math.sin(t), p[2]]); } g.add(fatLine(ring, col, 3)); });
+  }
+  invalidate();
+}
+function zoneFinish() {
+  if (S.zoneDraft.length >= 3) {
+    const n = S.zones.filter((z) => z.kind === S.zoneKind).length + 1;
+    S.zones.push({ name: ZONE_KINDS[S.zoneKind][0] + ' ' + n, kind: S.zoneKind, pts: S.zoneDraft });
+    saveStk();
+  }
+  S.zoneDraft = []; S.zoneTool = null; canvas.style.cursor = '';
+  stkRebuildZones(); buildStrikeUI();
+}
+const safeName = (s) => String(s).replace(/[^A-Za-z0-9 _-]/g, '');
+function zonesLua() {
+  const L = ['-- Written by Darktide Map Viewer (Strike tab). Darktide world coordinates, metres: x, y, z.', 'return {', `    mission = "${safeName(S.pack)}",`, '    zones = {'];
+  for (const z of S.zones) {
+    L.push(`        { name = "${safeName(z.name)}", kind = "${safeName(z.kind)}", pts = { ${z.pts.map((p) => `{ ${p.map((v) => (+v).toFixed(3)).join(', ')} }`).join(', ')} } },`);
+  }
+  L.push('    },', '}', '');
+  return L.join('\n');
+}
+function download(name, text, mime) {
+  const a = el('a', { download: name, href: URL.createObjectURL(new Blob([text], { type: mime })) });
+  a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
 function strikeUndo() {
+  if (S.zoneTool && S.zoneDraft.length) { S.zoneDraft.pop(); stkRebuildZones(); return; }
   if (S.strokes.length) { S.strokes.pop(); saveStk(); stkRebuildStrokes(); }
   else if (S.abil.length) { S.abil.pop(); saveStk(); stkRebuildAbil(); buildStrikeUI(); }
 }
@@ -1475,6 +1575,38 @@ addEventListener('pointerup', () => {
 function stkToolsUI() {
   const out = [];
   const chk = (label, on, fn) => { const i = el('input', { type: 'checkbox' }); i.checked = on; i.onchange = () => fn(i.checked); return el('label', {}, i, label); };
+  out.push(el('h4', {}, 'Look'));
+  out.push(el('div', { class: 'rowbtn' },
+    el('button', { class: S.strikeTextured ? '' : 'primary', onclick: () => { S.strikeTextured = false; try { localStorage.setItem('mv_strike_tex', '0'); } catch (_) {} strikeApplyMaterials(); invalidate(); buildStrikeUI(); } }, 'Flat'),
+    el('button', { class: S.strikeTextured ? 'primary' : '', title: 'Floors and walls with the game textures (needs a pack built with textures)',
+      onclick: () => { S.strikeTextured = true; try { localStorage.setItem('mv_strike_tex', '1'); } catch (_) {} strikeApplyMaterials(); invalidate(); buildStrikeUI(); } }, 'Textured')));
+  const setMin = (v) => { S.minObjR = v; try { localStorage.setItem('mv_minobj', String(v)); } catch (_) {} S.cullKey = null; applyVisibility(); buildStrikeUI(); };
+  out.push(el('small', {}, `Hide small objects and debris: parts with a radius under ${S.minObjR || 0} m${S.minObjR ? '' : ' (off)'}`));
+  out.push(el('div', { class: 'rowbtn' }, ...[['Off', 0], ['Debris', 0.75], ['Small', 1.5], ['Structure', 3]].map(([n, v]) =>
+    el('button', { class: S.minObjR === v ? 'primary' : '', onclick: () => setMin(v) }, n))));
+  const mr = el('input', { type: 'range', min: 0, max: 8, step: 0.25, value: S.minObjR || 0 });
+  mr.onchange = () => setMin(+mr.value);
+  out.push(el('label', {}, 'Radius (m)', mr));
+  out.push(el('h4', {}, 'Play zones (polygons)'));
+  out.push(el('small', {}, 'Outline where people should play: choose a type, click the vertices, then Finish (Enter or double-click). Backspace removes the last vertex, Esc cancels.'));
+  const kinds = el('div', { class: 'rowbtn' });
+  for (const [k, [label, col]] of Object.entries(ZONE_KINDS)) kinds.append(el('button', { class: S.zoneKind === k ? 'primary' : '', style: `border-left:6px solid ${col}`,
+    onclick: () => { S.zoneKind = k; stkRebuildZones(); buildStrikeUI(); } }, label));
+  out.push(kinds);
+  out.push(el('div', { class: 'rowbtn' },
+    el('button', { class: S.zoneTool ? 'primary' : '', onclick: () => { if (S.zoneTool) zoneFinish(); else { S.zoneTool = true; S.abilTool = null; S.drawOn = false; S.zoneDraft = []; canvas.style.cursor = 'crosshair'; buildStrikeUI(); } } },
+      S.zoneTool ? `Finish polygon (${S.zoneDraft.length} points)` : 'New zone')));
+  if (S.zones.length) {
+    out.push(chk('Show zones', S.showZones, (v) => { S.showZones = v; stkRebuildZones(); }));
+    S.zones.forEach((z, i) => out.push(el('div', { class: 'stk-row' }, el('span', { class: 'sw', style: 'background:' + (ZONE_KINDS[z.kind] || ZONE_KINDS.play)[1] }),
+      el('span', {}, z.name), el('small', {}, `${z.pts.length} pts`),
+      el('button', { onclick: () => strikeGo({ pos: centroid(z.pts) }) }, 'Go'),
+      el('button', { title: 'Rename', onclick: () => { const n = prompt('Zone name', z.name); if (n) { z.name = n; saveStk(); stkRebuildZones(); buildStrikeUI(); } } }, 'Aa'),
+      el('button', { onclick: () => { S.zones.splice(i, 1); saveStk(); stkRebuildZones(); buildStrikeUI(); } }, 'x'))));
+    out.push(el('div', { class: 'rowbtn' },
+      el('button', { onclick: () => download(`${S.pack}_zones.json`, JSON.stringify({ mission: S.pack, zones: S.zones }, null, 1), 'application/json') }, 'Export JSON'),
+      el('button', { onclick: () => download(`${S.pack}_zones.lua`, zonesLua(), 'text/plain') }, 'Export Lua')));
+  }
   out.push(el('h4', {}, 'Ability radius circles'));
   out.push(el('small', {}, 'Pick an ability, then click the map to place its circle. Esc stops placing.'));
   for (const [k, a] of Object.entries(ABILITIES)) {
@@ -1483,7 +1615,7 @@ function stkToolsUI() {
     const cl = el('img', { src: ICON_URL('class_' + a.cls), width: 18, height: 18, style: 'background:#101214;border-radius:50%;margin-left:-10px;margin-top:14px' });
     cl.onerror = () => { cl.style.display = 'none'; };
     const b = el('button', { class: S.abilTool === k ? 'primary' : '', title: a.note, style: 'display:flex;align-items:center;gap:6px;width:100%;text-align:left;margin:2px 0',
-      onclick: () => { S.abilTool = S.abilTool === k ? null : k; S.drawOn = false; canvas.style.cursor = S.abilTool ? 'crosshair' : ''; buildStrikeUI(); } },
+      onclick: () => { S.abilTool = S.abilTool === k ? null : k; S.drawOn = false; S.zoneTool = null; S.zoneDraft = []; stkRebuildZones(); canvas.style.cursor = S.abilTool ? 'crosshair' : ''; buildStrikeUI(); } },
       img, cl, el('span', {}, a.label, el('br'), el('small', {}, a.rings.length > 1 ? a.rings.map((r) => r.label).join(' / ') : a.rings[0].label)));
     out.push(b);
   }
@@ -1499,7 +1631,7 @@ function stkToolsUI() {
     });
   }
   out.push(el('h4', {}, 'Draw a path'));
-  out.push(el('button', { class: S.drawOn ? 'primary' : '', onclick: () => { S.drawOn = !S.drawOn; S.abilTool = null; canvas.style.cursor = S.drawOn ? 'crosshair' : ''; buildStrikeUI(); } },
+  out.push(el('button', { class: S.drawOn ? 'primary' : '', onclick: () => { S.drawOn = !S.drawOn; S.abilTool = null; S.zoneTool = null; S.zoneDraft = []; stkRebuildZones(); canvas.style.cursor = S.drawOn ? 'crosshair' : ''; buildStrikeUI(); } },
     S.drawOn ? 'Drawing: drag on the map (Esc to stop)' : 'Draw on the map'));
   const sw = el('div', { class: 'rowbtn' });
   for (const c of DRAW_COLORS) sw.append(el('button', { style: `background:${c};width:22px;height:22px;padding:0;${S.drawColor === c ? 'outline:2px solid #fff' : ''}`, title: c,

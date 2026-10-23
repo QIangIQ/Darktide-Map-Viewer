@@ -21,6 +21,22 @@ Each map pack carries gameplay data on top of the geometry.
 To add a category: add a `POI_RULES` line, rebuild the mission, then give it a colour and letter in `POI_STYLE` and a
 sidebar group in `STRIKE_GROUPS` (both in `viewer/app.js`).
 
+## Play zones export
+
+The Strike tab's **Export Lua** writes, per mission:
+
+```lua
+return {
+    mission = "dm_propaganda",
+    zones = {
+        { name = "Play here 1", kind = "play", pts = { { x, y, z }, { x, y, z }, { x, y, z } } },
+    },
+}
+```
+
+`kind` is `play`, `hold`, `avoid` or `route`; `pts` is the polygon outline in Darktide world coordinates (metres, z up;
+z is the height of the map slice when it was drawn). **Export JSON** has the same data.
+
 ## Ability circles
 
 The radii in the Strike tab are read from the Lua source (`scripts/settings/ability/` and `scripts/settings/talent/`);
