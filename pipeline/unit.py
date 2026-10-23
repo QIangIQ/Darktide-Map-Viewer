@@ -178,34 +178,46 @@ def load_unit(h):
             break
     # streamed geometry
     if any(len(s[0]) == 0 and s[1] > 0 for g in geoms for s in g['streams']):
-        # The .stream file holds one entry per streamed geometry (u32 n x blob, then index blob), but NOT
-        # in geometry order: match each entry to its geometry by the exact byte sizes it must have.
+        # The .stream file is a run of records, one per geometry that has streamed data: u32 n (the geometry's number of
+        # vertex streams), then one length-prefixed blob for each stream whose bytes are not in the unit itself, then
+        # the index blob if the unit does not hold it either. A geometry can be partly inline (some streams or the
+        # indices in the unit), and records are not always in geometry order, so each record is matched to the first
+        # waiting geometry whose stream count and exact blob sizes fit.
         sd = read_stream(sname) if sname else b''
-        sr = R(sd)
-        entries = {}
-        while sr.o + 4 <= len(sd):
-            try:
-                n = sr.u32()
-                if n > 32:
-                    break
-                blobs = [sr.blob() for _ in range(n)]
-                ib = sr.blob()
-            except struct.error:
+        pending = [g for g in geoms if any(len(s[0]) == 0 and s[1] > 0 for s in g['streams'])]
+        o = 0
+        while pending and o + 4 <= len(sd):
+            n = struct.unpack_from('<I', sd, o)[0]
+            if n > 32:
                 break
-            if sr.o > len(sd):
+            fit = None
+            for g in pending:
+                if len(g['streams']) != n:
+                    continue
+                ext = [i for i, s in enumerate(g['streams']) if len(s[0]) == 0 and s[1] > 0]
+                p, blobs, ok = o + 4, [], True
+                for i in ext:
+                    need = g['streams'][i][1] * g['streams'][i][2]
+                    if p + 4 + need > len(sd) or struct.unpack_from('<I', sd, p)[0] != need:
+                        ok = False; break
+                    blobs.append(sd[p + 4:p + 4 + need]); p += 4 + need
+                ib = None
+                if ok and len(g['ib']) == 0 and g['ni'] > 0:
+                    isz = g['ni'] * (2 if g['itype'] == 0 else 4)
+                    if p + 4 + isz > len(sd) or struct.unpack_from('<I', sd, p)[0] != isz:
+                        ok = False
+                    else:
+                        ib = sd[p + 4:p + 4 + isz]; p += 4 + isz
+                if ok:
+                    fit = (g, ext, blobs, ib, p); break
+            if not fit:
                 break
-            sig = tuple(len(b) for b in blobs) + (len(ib),)
-            entries.setdefault(sig, []).append((blobs, ib))
-        for g in geoms:
-            if g['streams'] and all(len(s[0]) == 0 for s in g['streams']):
-                isz = g['ni'] * (2 if g['itype'] == 0 else 4)
-                sig = tuple(s[1] * s[2] for s in g['streams']) + (isz,)
-                lst = entries.get(sig)
-                if lst:
-                    blobs, ib = lst.pop(0)
-                    for i, b in enumerate(blobs):
-                        g['streams'][i][0] = b
-                    g['ib'] = ib
+            g, ext, blobs, ib, o = fit
+            for i, b in zip(ext, blobs):
+                g['streams'][i][0] = b
+            if ib is not None:
+                g['ib'] = ib
+            pending.remove(g)
     lods = _lod_objects(tail, len(mos))
     hidden = set()
     for steps in lods:
