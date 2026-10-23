@@ -247,6 +247,17 @@ function buildMaterials(m) {
   applyFamilies();
   S.fallbackMat = new THREE.MeshStandardMaterial({ color: 0x8c8c8c, roughness: 0.9 });
   S.fallbackMat.userData.rec = { family: 'helper' };
+  applySides();
+}
+// Level meshes are one-sided (the game culls back faces), so from outside or behind a wall you see straight through
+// it. "Solid walls" draws both sides; three flips the normal on back faces so the lighting stays right.
+try { S.solid = localStorage.getItem('mv_solid') !== '0'; } catch (_) { S.solid = true; }
+function applySides() {
+  for (const m of [...S.materials, S.fallbackMat]) {
+    if (!m || !m.isMeshStandardMaterial) continue;
+    m.side = S.solid || m.alphaTest ? THREE.DoubleSide : THREE.FrontSide;
+    m.needsUpdate = true;
+  }
 }
 const FAMILIES = { surface: 'Surfaces', effect: 'Light cards / fog sheets', decal: 'Decal projector boxes', helper: 'Editor helpers (gizmos)', sky: 'Sky / fog domes' };
 S.familyOn = { surface: true, effect: true, decal: false, helper: false, sky: false };
@@ -519,6 +530,7 @@ function buildGfxUI() {
     el('h4', {}, 'View'),
     slider('Field of view', 40, 110, 1, camera.fov, (v) => { camera.fov = v; camera.updateProjectionMatrix(); }),
     chk('Distance haze', !!scene.fog, (v) => (scene.fog = v ? new THREE.FogExp2(0x1a1e1f, 0.0025) : null)),
+    chk('Solid walls (draw both sides of surfaces)', S.solid, (v) => { S.solid = v; try { localStorage.setItem('mv_solid', v ? '1' : '0'); } catch (_) {} applySides(); invalidate(); }),
     chk('Textures', true, (v) => setTextures(v)),
     chk('Wireframe', false, (v) => S.materials.forEach((m) => (m.wireframe = v))),
     chk('Flip normal-map green', false, (v) => S.materials.forEach((m) => m.normalScale.set(1, v ? -1 : 1))),

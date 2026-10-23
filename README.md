@@ -76,6 +76,8 @@ Open a mission and press **T** (or click **Strikemap**).
 
 - **Look:** *Flat* is the dark tactical style; *Textured* shows floors and walls with the game's own textures (the
   pack must be built with textures, not `--no-textures`). Both keep the height slice and *Playable area only*.
+- **Solid walls:** level meshes are one-sided, so from outside or behind a wall you can see through it. Graphics >
+  *Solid walls* (on by default) draws both sides of every surface.
 - **Hide small objects and debris:** presets (Off, Debris, Small, Structure) and a radius slider hide mesh parts
   smaller than that radius in metres, so only floors, walls and large structures remain. It also works in the
   normal 3D view.
