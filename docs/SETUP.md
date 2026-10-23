@@ -97,6 +97,15 @@ python build_all.py [--tex-max 1024] [key ...]        # no keys = every mission
 Disk and time (1024 px textures): one mission takes 10 to 60 seconds (one tested pack was about 0.4 GB, with the
 textures shared in `packs\_tex`); all missions take about 10 minutes and about 12 GB.
 
+### Texture channels
+
+`ROLE_CHANNELS` in `pipeline/build_map.py` lists the material channel names read as albedo, normal, ORM and
+emissive. Some materials call their colour texture `sample_bc`, `bc1` or `cloth_bc` (listed), or an unnamed
+`texture_map_<hash>`: for those, up to four candidates are decoded and the largest one that looks like colour (not a
+mask, ORM or single-channel map) becomes the albedo, recorded as `albedo_channel: "guess"`. After changing this,
+rebuild the missions (the `_tex` cache keeps the old decodes, which are reused). Materials that are water, foam,
+decals or grunge overlays have no albedo and show as a flat colour.
+
 ### Making maps of your own levels
 
 Any level in the cache can be built with its path: `python build_map.py content/levels/<...>/<level>`. The viewer lists

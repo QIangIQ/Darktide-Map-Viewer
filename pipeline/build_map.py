@@ -22,7 +22,7 @@ TEXDIR = os.path.join(PACKS, '_tex')
 SHADER_NAMES = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'shader_names.json')))
 CH = {v: int(k, 16) for k, v in SHADER_NAMES.items()}
 ROLE_CHANNELS = {
-    'albedo': ['base_bc', 'bc', 'bca', 'base_color', 'mat1_bc', 'coat_bc'],
+    'albedo': ['base_bc', 'bc', 'bca', 'base_color', 'mat1_bc', 'coat_bc', 'sample_bc', 'bc1', 'cloth_bc'],
     'normal': ['base_nm', 'nm', 'normal', 'mat1_nm', 'coat_nm'],
     'orm': ['base_orm', 'orm', 'mat1_orm', 'coat_orm'],
     'emissive': ['base_em', 'em'],
@@ -52,7 +52,11 @@ def _tex_job(args):
             z = np.sqrt(np.clip(1 - n[..., 0] ** 2 - n[..., 1] ** 2, 0, 1))
             rgb = np.dstack([img[..., 0], img[..., 1], ((z * 0.5 + 0.5) * 255).round().astype(np.uint8)])
             im = Image.fromarray(rgb, 'RGB'); im.save(out, 'WEBP', quality=95, method=4)
-        elif role == 'albedo':
+        elif role in ('albedo', 'albedog'):
+            if role == 'albedog':  # a guessed texture_map_*: keep it only if it looks like colour, not a mask or ORM
+                mean = img[..., :3].reshape(-1, 3).mean(0)
+                if info['kind'] in ('bc4', 'bc5') or float(mean.max() - mean.min()) >= 110:
+                    return h, role, None, dict(skipped='not colour-like')
             a = img[..., 3]
             cut = float((a < 128).mean())
             meta['alpha'] = cut
@@ -267,6 +271,13 @@ def build(arg, tex_max=1024, textures=True, themes=True):
                         rec[role] = hx(t); rec[role + '_channel'] = c
                         tex_jobs[(t, role)] = True
                         break
+            if 'albedo' not in rec:  # unnamed slots (texture_map_<hash>): try them as albedo, keep the largest colour-like one
+                cands = [t for c, t in sorted((SHADER_NAMES.get('%08x' % k, '%08x' % k), t) for k, t in res['textures'].items())
+                         if c.startswith('texture_map_') and t and have_raw(t, 'texture')][:4]
+                if cands:
+                    rec['albedog'] = [hx(t) for t in cands]
+                    for t in cands:
+                        tex_jobs[(t, 'albedog')] = True
             V = {SHADER_NAMES.get('%08x' % k, '%08x' % k): v[1] for k, v in res['variables'].items()}
             for vn in ('base_color', 'color', 'albedo_color', 'tint_color'):
                 if vn in V and len(V[vn]) >= 3:
@@ -311,8 +322,18 @@ def build(arg, tex_max=1024, textures=True, themes=True):
                             rec['alphaTest'] = 0.5
                     else:
                         rec.pop(role)
+            if 'albedog' in rec:  # guessed albedo: the largest candidate that passed the colour check
+                best = None
+                for hh in rec.pop('albedog'):
+                    fn, meta = tex_files.get((int(hh, 16), 'albedog'), (None, {}))
+                    area = meta.get('w', 0) * meta.get('h', 0)
+                    if fn and (best is None or area > best[0]):
+                        best = (area, fn)
+                if best and 'albedo' not in rec:
+                    rec['albedo'] = best[1]; rec['albedo_channel'] = 'guess'
     else:
         for rec in mat_records:
+            rec.pop('albedog', None); rec.pop('albedog_channel', None)
             for role in ROLE_CHANNELS:
                 rec.pop(role, None)
 
